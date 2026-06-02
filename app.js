@@ -96,6 +96,11 @@ const App = (() => {
         ui.playlistsGrid.appendChild(card);
       });
     } catch (e) {
+      if (e.message === 'SCOPE_MISMATCH') {
+        ui.playlistsGrid.innerHTML = '<p style="color:var(--accent);font-size:12px;grid-column:1/-1;cursor:pointer" id="reauth-msg">Sessione scaduta — clicca qui per ri-autenticarti</p>';
+        document.getElementById('reauth-msg')?.addEventListener('click', () => Auth.login(true));
+        return;
+      }
       toast('Errore caricamento playlist: ' + e.message, true);
     }
   }
@@ -125,6 +130,11 @@ const App = (() => {
       updateCounter();
       toast(`${total} brani in coda`);
     } catch (e) {
+      if (e.message === 'SCOPE_MISMATCH') {
+        toast('Sessione scaduta — ri-autenticazione in corso…', false);
+        setTimeout(() => Auth.login(true), 1500);
+        return;
+      }
       setStatus('error', 'errore');
       ui.voidLabel.textContent = 'errore';
       toast(e.message, true);
