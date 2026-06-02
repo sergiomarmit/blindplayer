@@ -206,10 +206,35 @@ const Player = (() => {
     _playTrack(_tracks[_currentIndex]).catch(e => callbacks.onError(e.message));
   }
 
+  // ── Helpers REST per pause/resume (evita togglePlay SDK che richiede lista interna) ──
+  async function _apiPut(path, body) {
+    const token = await Auth.getAccessToken();
+    const res = await fetch(`https://api.spotify.com/v1${path}`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    return res;
+  }
+
   // ── Controlli pubblici ────────────────────────────────────────
   async function togglePlay() {
-    if (!_player) return;
-    await _player.togglePlay();
+    if (!_deviceId) return;
+    // Leggi stato corrente dall'SDK, poi usa REST per pause/resume
+    const state = _player ? await _player.getCurrentState() : null;
+    const isPlaying = state ? !state.paused : false;
+    if (isPlaying) {
+      await fetch(`https://api.spotify.com/v1/me/player/pause?device_id=${_deviceId}`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${await Auth.getAccessToken()}` },
+      });
+    } else {
+      await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${_deviceId}`, {
+        method: 'PUT',
+        headers: { Authorization: `Bearer ${await Auth.getAccessToken()}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+    }
   }
 
   async function next() {
