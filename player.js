@@ -8,6 +8,7 @@ const Player = (() => {
   let _currentIndex = 0;
   let _progressInterval = null;
   let _initPromise = null;
+  let _busy = false;
 
   const callbacks = {
     onReady: () => {},
@@ -177,31 +178,34 @@ const Player = (() => {
 
   // ── Riproduci una traccia sul device corrente ─────────────────
   async function _playTrack(uri) {
-    const token = await Auth.getAccessToken();
-    if (!token) throw new Error('Token non disponibile');
-    if (!_deviceId) throw new Error('Player non pronto, ricarica la pagina');
+    if (_busy) return;
+    _busy = true;
+    try {
+      const token = await Auth.getAccessToken();
+      if (!token) throw new Error('Token non disponibile');
+      if (!_deviceId) throw new Error('Player non pronto, ricarica la pagina');
 
-    const res = await fetch(
-      `https://api.spotify.com/v1/me/player/play?device_id=${_deviceId}`,
-      {
-        method: 'PUT',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ uris: [uri] }),
+      const res = await fetch(
+        `https://api.spotify.com/v1/me/player/play?device_id=${_deviceId}`,
+        {
+          method: 'PUT',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uris: [uri] }),
+        }
+      );
+
+      if (!res.ok && res.status !== 204 && res.status !== 202) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error('Playback: ' + (err.error?.message || `HTTP ${res.status}`));
       }
-    );
-
-    // 204 = OK senza body, 202 = accepted
-    if (!res.ok && res.status !== 204 && res.status !== 202) {
-      const err = await res.json().catch(() => ({}));
-      const msg = err.error?.message || `HTTP ${res.status}`;
-      throw new Error('Playback: ' + msg);
+    } finally {
+      // Rilascia il lock dopo 1.5s per ignorare l'evento state_changed a position=0
+      setTimeout(() => { _busy = false; }, 1500);
     }
   }
 
   function _handleTrackEnd() {
+    if (_busy) return; // cambio traccia manuale in corso, ignora
     _currentIndex = (_currentIndex + 1) % _tracks.length;
     _playTrack(_tracks[_currentIndex]).catch(e => callbacks.onError(e.message));
   }
