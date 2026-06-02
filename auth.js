@@ -3,71 +3,69 @@
 const Auth = (() => {
   const STORAGE_KEY = 'bp_token';
   const VERIFIER_KEY = 'bp_cv';
-  const STATE_KEY = 'bp_state';
+  const STATE_KEY    = 'bp_state';
+  // Versione degli scope — se cambia, forza re-login automatico
+  const SCOPE_VERSION = 'v2';
+  const SCOPE_VER_KEY = 'bp_sv';
 
   // ── PKCE helpers ──────────────────────────────────────────────
   function randomString(len = 64) {
     const arr = new Uint8Array(len);
     crypto.getRandomValues(arr);
-    return Array.from(arr, b => b.toString(16).padStart(2, '0')).join('').slice(0, len);
+    return Array.from(arr, b => b.toString(16).padStart(2,'0')).join('').slice(0, len);
   }
 
   async function sha256(plain) {
-    const enc = new TextEncoder().encode(plain);
-    const hash = await crypto.subtle.digest('SHA-256', enc);
-    return hash;
+    return crypto.subtle.digest('SHA-256', new TextEncoder().encode(plain));
   }
 
-  function base64urlEncode(buffer) {
-    return btoa(String.fromCharCode(...new Uint8Array(buffer)))
-      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+  function base64urlEncode(buf) {
+    return btoa(String.fromCharCode(...new Uint8Array(buf)))
+      .replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
   }
 
   async function generateChallenge(verifier) {
-    const hashed = await sha256(verifier);
-    return base64urlEncode(hashed);
+    return base64urlEncode(await sha256(verifier));
   }
 
-  // ── Avvio login ───────────────────────────────────────────────
-  async function login() {
-    const verifier = randomString(64);
-    const state = randomString(16);
-    const challenge = await generateChallenge(verifier);
+  // ── Login ─────────────────────────────────────────────────────
+  async function login(forceDialog = false) {
+    const verifier   = randomString(64);
+    const state      = randomString(16);
+    const challenge  = await generateChallenge(verifier);
 
     sessionStorage.setItem(VERIFIER_KEY, verifier);
     sessionStorage.setItem(STATE_KEY, state);
 
     const params = new URLSearchParams({
-      client_id: CONFIG.CLIENT_ID,
-      response_type: 'code',
-      redirect_uri: CONFIG.REDIRECT_URI,
+      client_id:             CONFIG.CLIENT_ID,
+      response_type:         'code',
+      redirect_uri:          CONFIG.REDIRECT_URI,
       code_challenge_method: 'S256',
-      code_challenge: challenge,
+      code_challenge:        challenge,
       state,
-      scope: CONFIG.SCOPES,
-      show_dialog: 'false',
+      scope:                 CONFIG.SCOPES,
+      show_dialog:           forceDialog ? 'true' : 'false',
     });
 
     window.location.href = `${CONFIG.SPOTIFY_AUTH_URL}?${params.toString()}`;
   }
 
-  // ── Scambio code → token ──────────────────────────────────────
+  // ── Code exchange ─────────────────────────────────────────────
   async function exchangeCode(code) {
     const verifier = sessionStorage.getItem(VERIFIER_KEY);
     if (!verifier) throw new Error('Code verifier mancante');
 
-    const body = new URLSearchParams({
-      client_id: CONFIG.CLIENT_ID,
-      grant_type: 'authorization_code',
-      code,
-      redirect_uri: CONFIG.REDIRECT_URI,
-      code_verifier: verifier,
-    });
-
     const res = await fetch('https://accounts.spotify.com/api/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString(),
+      body: new URLSearchParams({
+        client_id:     CONFIG.CLIENT_ID,
+        grant_type:    'authorization_code',
+        code,
+        redirect_uri:  CONFIG.REDIRECT_URI,
+        code_verifier: verifier,
+      }).toString(),
     });
 
     if (!res.ok) {
@@ -77,32 +75,29 @@ const Auth = (() => {
 
     const data = await res.json();
     saveToken(data);
+    // Salva la versione scope corrente
+    localStorage.setItem(SCOPE_VER_KEY, SCOPE_VERSION);
 
-    // Pulizia
     sessionStorage.removeItem(VERIFIER_KEY);
     sessionStorage.removeItem(STATE_KEY);
-
-    // Rimuovi i parametri dall'URL
     window.history.replaceState({}, document.title, window.location.pathname);
 
     return data.access_token;
   }
 
-  // ── Refresh token ─────────────────────────────────────────────
+  // ── Refresh ───────────────────────────────────────────────────
   async function refresh() {
     const token = loadToken();
-    if (!token || !token.refresh_token) return null;
-
-    const body = new URLSearchParams({
-      client_id: CONFIG.CLIENT_ID,
-      grant_type: 'refresh_token',
-      refresh_token: token.refresh_token,
-    });
+    if (!token?.refresh_token) return null;
 
     const res = await fetch('https://accounts.spotify.com/api/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString(),
+      body: new URLSearchParams({
+        client_id:     CONFIG.CLIENT_ID,
+        grant_type:    'refresh_token',
+        refresh_token: token.refresh_token,
+      }).toString(),
     });
 
     if (!res.ok) { logout(); return null; }
@@ -119,31 +114,35 @@ const Auth = (() => {
   }
 
   function loadToken() {
-    try {
-      return JSON.parse(localStorage.getItem(STORAGE_KEY));
-    } catch { return null; }
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY)); }
+    catch { return null; }
   }
 
   async function getAccessToken() {
-    let token = loadToken();
+    const token = loadToken();
     if (!token) return null;
-    if (Date.now() > token.expiry - 60000) {
-      const newToken = await refresh();
-      return newToken;
-    }
+    if (Date.now() > token.expiry - 60000) return await refresh();
     return token.access_token;
   }
 
   function logout() {
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(SCOPE_VER_KEY);
     window.location.href = window.location.pathname;
   }
 
+  // Controlla se il token è valido E ha gli scope aggiornati
   function isLoggedIn() {
-    return !!loadToken();
+    if (!loadToken()) return false;
+    // Se la versione scope è cambiata, forza re-login silenzioso
+    if (localStorage.getItem(SCOPE_VER_KEY) !== SCOPE_VERSION) {
+      localStorage.removeItem(STORAGE_KEY);
+      return false;
+    }
+    return true;
   }
 
-  // ── API helper ────────────────────────────────────────────────
+  // ── API GET helper ────────────────────────────────────────────
   async function apiGet(path) {
     const token = await getAccessToken();
     if (!token) throw new Error('Non autenticato');
@@ -152,10 +151,16 @@ const Auth = (() => {
       headers: { Authorization: `Bearer ${token}` },
     });
 
+    // 401 → prova refresh
     if (res.status === 401) {
       const refreshed = await refresh();
       if (!refreshed) { logout(); return null; }
       return apiGet(path);
+    }
+
+    // 403 → token vecchio senza scope necessari, forza re-login
+    if (res.status === 403) {
+      throw new Error('SCOPE_MISMATCH');
     }
 
     if (!res.ok) {
