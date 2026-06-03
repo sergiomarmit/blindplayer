@@ -170,10 +170,26 @@ const Player = (() => {
     _tracks = await loadPlaylistTracks(id);
     if (!_tracks.length) throw new Error('Playlist vuota o non accessibile');
 
+    // Trasferisci la riproduzione esplicitamente all'SDK prima di avviare
+    await _transferPlayback();
+
     _currentIndex = 0;
     await _playTrack(_tracks[0]);
     _startProgressPolling();
     return _tracks.length;
+  }
+
+  // ── Trasferisci la riproduzione all'SDK device ──────────────────
+  async function _transferPlayback() {
+    const token = await Auth.getAccessToken();
+    if (!token || !_deviceId) return;
+    await fetch('https://api.spotify.com/v1/me/player', {
+      method: 'PUT',
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_ids: [_deviceId], play: false }),
+    });
+    // Piccola attesa per dare tempo a Spotify di registrare il device
+    await new Promise(function(r) { setTimeout(r, 500); });
   }
 
   // ── Riproduci una traccia sul device corrente ─────────────────
