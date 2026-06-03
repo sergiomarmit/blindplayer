@@ -9,6 +9,7 @@ const Player = (() => {
   let _progressInterval = null;
   let _initPromise = null;
   let _busy = false;
+  let _trackCount = 0;
 
   const callbacks = {
     onReady: () => {},
@@ -40,35 +41,28 @@ const Player = (() => {
     return null;
   }
 
-  // ── Carica tutti i brani (senza fields filter per evitare bug paginazione) ──
-  async function loadPlaylistTracks(playlistId) {
-    let tracks = [];
-    // NON usiamo ?fields= perché tronca il campo "next" in alcune versioni API
-    let path = `/playlists/${playlistId}/tracks?limit=100`;
+  // ── Avvia playlist via context_uri (no lettura brani, no 403) ──────
+  async function _playContext(playlistUri, shuffle) {
+    const token = await Auth.getAccessToken();
+    if (!token || !_deviceId) throw new Error('Player non pronto');
 
-    while (path) {
-      const data = await Auth.apiGet(path);
-      if (!data || !data.items) break;
+    // Attiva shuffle
+    await fetch('https://api.spotify.com/v1/me/player/shuffle?state=' + (shuffle ? 'true' : 'false') + '&device_id=' + _deviceId, {
+      method: 'PUT',
+      headers: { Authorization: 'Bearer ' + token },
+    });
 
-      const valid = data.items
-        .filter(i => i && i.track && i.track.uri && i.track.type === 'track')
-        .map(i => i.track.uri);
-      tracks = tracks.concat(valid);
+    // Avvia la playlist come contesto
+    const res = await fetch('https://api.spotify.com/v1/me/player/play?device_id=' + _deviceId, {
+      method: 'PUT',
+      headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ context_uri: playlistUri, offset: { position: Math.floor(Math.random() * 50) } }),
+    });
 
-      if (data.next) {
-        // data.next è URL completo: estrai solo path + query
-        try {
-          const u = new URL(data.next);
-          path = u.pathname + u.search;
-        } catch {
-          path = null;
-        }
-      } else {
-        path = null;
-      }
+    if (!res.ok && res.status !== 204 && res.status !== 202) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error('Playback: ' + (err.error?.message || 'HTTP ' + res.status));
     }
-
-    return shuffle(tracks);
   }
 
   // ── Init SDK — gestisce correttamente il timing del callback globale ──
@@ -162,18 +156,14 @@ const Player = (() => {
     const id = extractPlaylistId(input);
     if (!id) throw new Error('URL, URI o ID playlist non valido');
 
-    // Assicurati che il player sia pronto
-    if (!_deviceId) {
-      await init();
-    }
+    if (!_deviceId) await init();
 
-    _tracks = await loadPlaylistTracks(id);
-    if (!_tracks.length) throw new Error('Playlist vuota o non accessibile');
-
+    const playlistUri = 'spotify:playlist:' + id;
+    await _playContext(playlistUri, true);
+    _tracks = [playlistUri]; // segnaposto per getTrackInfo
     _currentIndex = 0;
-    await _playTrack(_tracks[0]);
     _startProgressPolling();
-    return _tracks.length;
+    return '∞'; // non conosciamo il totale senza leggere i brani
   }
 
   // ── Riproduci una traccia sul device corrente ─────────────────
@@ -204,11 +194,7 @@ const Player = (() => {
     }
   }
 
-  function _handleTrackEnd() {
-    if (_busy) return; // cambio traccia manuale in corso, ignora
-    _currentIndex = (_currentIndex + 1) % _tracks.length;
-    _playTrack(_tracks[_currentIndex]).catch(e => callbacks.onError(e.message));
-  }
+  // L'auto-advance è gestito da Spotify internamente con context_uri
 
   // ── Helpers REST per pause/resume (evita togglePlay SDK che richiede lista interna) ──
   async function _apiPut(path, body) {
@@ -242,15 +228,19 @@ const Player = (() => {
   }
 
   async function next() {
-    if (!_tracks.length) return;
-    _currentIndex = (_currentIndex + 1) % _tracks.length;
-    await _playTrack(_tracks[_currentIndex]);
+    const token = await Auth.getAccessToken();
+    await fetch('https://api.spotify.com/v1/me/player/next?device_id=' + _deviceId, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token },
+    });
   }
 
   async function prev() {
-    if (!_tracks.length) return;
-    _currentIndex = (_currentIndex - 1 + _tracks.length) % _tracks.length;
-    await _playTrack(_tracks[_currentIndex]);
+    const token = await Auth.getAccessToken();
+    await fetch('https://api.spotify.com/v1/me/player/previous?device_id=' + _deviceId, {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + token },
+    });
   }
 
   async function setVolume(val) {
@@ -258,7 +248,8 @@ const Player = (() => {
   }
 
   function getTrackInfo() {
-    return { current: _currentIndex + 1, total: _tracks.length };
+    // Con context_uri non conosciamo il totale — mostriamo solo il progressivo
+    return { current: _trackCount, total: '?' };
   }
 
   // ── Progress polling ──────────────────────────────────────────
