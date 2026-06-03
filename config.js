@@ -19,8 +19,6 @@ const CONFIG = {
     'playlist-read-collaborative',
   ].join(' '),
 
-  // Incrementa questo numero ogni volta che aggiungi nuovi scope.
-  // Se il token salvato ha una versione precedente, viene invalidato automaticamente.
   TOKEN_VERSION: 4,
 
   SPOTIFY_AUTH_URL: 'https://accounts.spotify.com/authorize',
