@@ -21,7 +21,7 @@ const CONFIG = {
 
   // Incrementa questo numero ogni volta che aggiungi nuovi scope.
   // Se il token salvato ha una versione precedente, viene invalidato automaticamente.
-  TOKEN_VERSION: 3,
+  TOKEN_VERSION: 4,
 
   SPOTIFY_AUTH_URL: 'https://accounts.spotify.com/authorize',
   SPOTIFY_API_BASE: 'https://api.spotify.com/v1',
