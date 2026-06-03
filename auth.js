@@ -10,7 +10,7 @@ const Auth = (() => {
     return Array.from(arr, function(b) { return b.toString(16).padStart(2,'0'); }).join('').slice(0, len);
   }
 
-  function sha256(plain) {
+  async function sha256(plain) {
     return crypto.subtle.digest('SHA-256', new TextEncoder().encode(plain));
   }
 
@@ -19,35 +19,13 @@ const Auth = (() => {
       .replace(/\+/g,'-').replace(/\//g,'_').replace(/=/g,'');
   }
 
-  function generateChallenge(verifier) {
-    return sha256(verifier).then(function(h) { return base64urlEncode(h); });
+  async function generateChallenge(verifier) {
+    return base64urlEncode(await sha256(verifier));
   }
 
-  function login(forceDialog) {
-    return generateChallenge(randomString(64)).then(function(challenge) {
-      var verifier = randomString(64);
-      generateChallenge(verifier).then(function(ch) {
-        var state = randomString(16);
-        sessionStorage.setItem(VERIFIER_KEY, verifier);
-        sessionStorage.setItem(STATE_KEY, state);
-        var params = new URLSearchParams({
-          client_id: CONFIG.CLIENT_ID,
-          response_type: 'code',
-          redirect_uri: CONFIG.REDIRECT_URI,
-          code_challenge_method: 'S256',
-          code_challenge: ch,
-          state: state,
-          scope: CONFIG.SCOPES,
-          show_dialog: forceDialog ? 'true' : 'false'
-        });
-        window.location.href = CONFIG.SPOTIFY_AUTH_URL + '?' + params.toString();
-      });
-    });
-  }
-
-  async function loginAsync(forceDialog) {
-    var verifier = randomString(64);
-    var state = randomString(16);
+  async function login(forceDialog) {
+    var verifier  = randomString(64);
+    var state     = randomString(16);
     var challenge = await generateChallenge(verifier);
     sessionStorage.setItem(VERIFIER_KEY, verifier);
     sessionStorage.setItem(STATE_KEY, state);
@@ -145,15 +123,13 @@ const Auth = (() => {
       if (!refreshed) { logout(); return null; }
       return apiGet(path);
     }
-    if (res.status === 403) {
-      throw new Error('SCOPE_MISMATCH');
-    }
     if (!res.ok) {
       var err = await res.json().catch(function() { return {}; });
-      throw new Error((err.error && err.error.message) || ('API error ' + res.status));
+      var msg = (err.error && err.error.message) || ('Errore API ' + res.status);
+      throw new Error(msg);
     }
     return res.json();
   }
 
-  return { login: loginAsync, exchangeCode: exchangeCode, getAccessToken: getAccessToken, logout: logout, isLoggedIn: isLoggedIn, apiGet: apiGet };
+  return { login: login, exchangeCode: exchangeCode, getAccessToken: getAccessToken, logout: logout, isLoggedIn: isLoggedIn, apiGet: apiGet };
 })();
