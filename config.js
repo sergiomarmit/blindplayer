@@ -1,5 +1,5 @@
 const CONFIG = {
-  CLIENT_ID: '5e3887177f2b42d6afd84308b61ff6fd',
+  CLIENT_ID: 'e535e52c31d444f09285ed9f563490cd',
 
   REDIRECT_URI: (function() {
     var host = window.location.hostname;
