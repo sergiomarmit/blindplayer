@@ -1,11 +1,9 @@
-// ─── APP — Orchestrazione UI ───────────────────────────────────────
-
 const App = (() => {
 
   const screens = {
-    login: document.getElementById('screen-login'),
+    login:     document.getElementById('screen-login'),
     playlists: document.getElementById('screen-playlists'),
-    player: document.getElementById('screen-player'),
+    player:    document.getElementById('screen-player'),
   };
 
   const ui = {
@@ -31,19 +29,17 @@ const App = (() => {
     toast:         document.getElementById('toast'),
   };
 
-  // ── Toast ─────────────────────────────────────────────────────
-  let _toastTimer = null;
-  function toast(msg, isError = false) {
+  var _toastTimer = null;
+  function toast(msg, isError) {
     clearTimeout(_toastTimer);
     ui.toast.textContent = msg;
     ui.toast.className = 'toast show' + (isError ? ' error' : '');
-    _toastTimer = setTimeout(() => { ui.toast.className = 'toast'; }, 4000);
+    _toastTimer = setTimeout(function() { ui.toast.className = 'toast'; }, 4000);
   }
 
-  // ── Screen ────────────────────────────────────────────────────
   function showScreen(name) {
-    Object.entries(screens).forEach(([k, el]) => {
-      el.classList.toggle('active', k === name);
+    Object.keys(screens).forEach(function(k) {
+      screens[k].classList.toggle('active', k === name);
     });
   }
 
@@ -65,162 +61,128 @@ const App = (() => {
   }
 
   function updateCounter() {
-    const { current, total } = Player.getTrackInfo();
-    ui.trackNum.textContent   = current || '—';
-    ui.trackTotal.textContent = total   || '—';
-  }
-
-  // ── Carica playlist utente ────────────────────────────────────
-  async function loadUserPlaylists() {
-    ui.playlistsGrid.innerHTML = '<div class="loading-dots"><span></span><span></span><span></span></div>';
-    try {
-      const data = await Auth.apiGet('/me/playlists?limit=50');
-      if (!data || !data.items.length) {
-        ui.playlistsGrid.innerHTML = '<p style="color:var(--muted);font-size:12px;grid-column:1/-1">Nessuna playlist trovata.</p>';
-        return;
-      }
-      ui.playlistsGrid.innerHTML = '';
-      data.items.forEach(pl => {
-        const card = document.createElement('div');
-        card.className = 'playlist-card';
-        const img = pl.images && pl.images[0] ? pl.images[0].url : '';
-        card.innerHTML = `
-          ${img
-            ? `<img class="playlist-card-thumb" src="${img}" alt="" loading="lazy" />`
-            : '<div class="playlist-card-thumb" style="background:var(--bg3);border-radius:2px;aspect-ratio:1/1;margin-bottom:10px"></div>'
-          }
-          <div class="playlist-card-name">${escHtml(pl.name)}</div>
-          <div class="playlist-card-count">${pl.tracks.total} brani</div>
-        `;
-        card.addEventListener('click', () => launchPlaylist(pl.id));
-        ui.playlistsGrid.appendChild(card);
-      });
-    } catch (e) {
-      if (e.message === 'SCOPE_MISMATCH') {
-        ui.playlistsGrid.innerHTML = '<p style="color:var(--accent);font-size:12px;grid-column:1/-1;cursor:pointer" id="reauth-msg">Sessione scaduta — clicca qui per ri-autenticarti</p>';
-        document.getElementById('reauth-msg')?.addEventListener('click', () => Auth.login(true));
-        return;
-      }
-      toast('Errore caricamento playlist: ' + e.message, true);
-    }
-  }
-
-  // ── Lancia riproduzione ───────────────────────────────────────
-  let _launching = false;
-  async function launchPlaylist(input) {
-    if (_launching) return;
-    _launching = true;
-
-    showScreen('player');
-    setStatus('', 'connessione…');
-    ui.voidLabel.textContent = 'connessione…';
-    setPlayIcon(false);
-
-    try {
-      // Aspetta che il player sia pronto (init già in corso in background)
-      if (!Player.isReady()) {
-        ui.voidLabel.textContent = 'inizializzazione…';
-        await Player.init();
-      }
-
-      ui.voidLabel.textContent = 'caricamento…';
-      const total = await Player.startPlaylist(input);
-      setStatus('active', 'in riproduzione');
-      setPlayIcon(true);
-      updateCounter();
-      toast(`${total} brani in coda`);
-    } catch (e) {
-      if (e.message === 'SCOPE_MISMATCH') {
-        toast('Sessione scaduta — ri-autenticazione in corso…', false);
-        setTimeout(() => Auth.login(true), 1500);
-        return;
-      }
-      setStatus('error', 'errore');
-      ui.voidLabel.textContent = 'errore';
-      toast(e.message, true);
-      console.error('[BlindPlayer] launchPlaylist error:', e);
-    } finally {
-      _launching = false;
-    }
+    var info = Player.getTrackInfo();
+    ui.trackNum.textContent   = info.current || '\u2014';
+    ui.trackTotal.textContent = info.total   || '\u2014';
   }
 
   function escHtml(s) {
     return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
-  // ── Player callbacks ──────────────────────────────────────────
-  function setupPlayerCallbacks() {
-    Player.on('onReady', () => {
-      toast('Player pronto ✓');
-    });
+  async function loadUserPlaylists() {
+    ui.playlistsGrid.innerHTML = '<div class="loading-dots"><span></span><span></span><span></span></div>';
+    try {
+      var data = await Auth.apiGet('/me/playlists?limit=50');
+      if (!data || !data.items || !data.items.length) {
+        ui.playlistsGrid.innerHTML = '<p style="color:var(--muted);font-size:12px;grid-column:1/-1">Nessuna playlist trovata.</p>';
+        return;
+      }
+      ui.playlistsGrid.innerHTML = '';
+      data.items.forEach(function(pl) {
+        if (!pl || !pl.id) return;
+        var card = document.createElement('div');
+        card.className = 'playlist-card';
+        var img   = pl.images && pl.images[0] ? pl.images[0].url : '';
+        var count = (pl.tracks && pl.tracks.total != null) ? pl.tracks.total : '?';
+        card.innerHTML =
+          (img ? '<img class="playlist-card-thumb" src="' + img + '" alt="" loading="lazy" />'
+               : '<div class="playlist-card-thumb" style="background:var(--bg3);border-radius:2px;aspect-ratio:1/1;margin-bottom:10px"></div>') +
+          '<div class="playlist-card-name">' + escHtml(pl.name || 'Playlist') + '</div>' +
+          '<div class="playlist-card-count">' + count + ' brani</div>';
+        card.addEventListener('click', function() { launchPlaylist(pl.id); });
+        ui.playlistsGrid.appendChild(card);
+      });
+    } catch (e) {
+      console.error('[BP] loadUserPlaylists error:', e);
+      ui.playlistsGrid.innerHTML = '<p style="color:var(--muted);font-size:12px;grid-column:1/-1">Errore caricamento playlist: ' + escHtml(e.message) + '</p>';
+    }
+  }
 
-    Player.on('onStateChange', state => {
+  var _launching = false;
+  async function launchPlaylist(input) {
+    if (_launching) return;
+    _launching = true;
+    showScreen('player');
+    setStatus('', 'connessione\u2026');
+    ui.voidLabel.textContent = 'connessione\u2026';
+    setPlayIcon(false);
+    try {
+      if (!Player.isReady()) {
+        ui.voidLabel.textContent = 'inizializzazione\u2026';
+        await Player.init();
+      }
+      ui.voidLabel.textContent = 'caricamento\u2026';
+      var total = await Player.startPlaylist(input);
+      setStatus('active', 'in riproduzione');
+      setPlayIcon(true);
+      updateCounter();
+      toast(total + ' brani in coda');
+    } catch (e) {
+      console.error('[BP] launchPlaylist error:', e);
+      setStatus('error', 'errore');
+      ui.voidLabel.textContent = 'errore';
+      toast(e.message, true);
+    } finally {
+      _launching = false;
+    }
+  }
+
+  function setupPlayerCallbacks() {
+    Player.on('onReady', function() { toast('Player pronto \u2713'); });
+    Player.on('onStateChange', function(state) {
       if (!state) return;
-      const playing = !state.paused;
+      var playing = !state.paused;
       setPlayIcon(playing);
       setStatus(playing ? 'active' : '', playing ? 'in riproduzione' : 'in pausa');
       updateProgress(state.position, state.duration);
       updateCounter();
     });
-
-    Player.on('onError', msg => {
+    Player.on('onError', function(msg) {
       toast(msg, true);
       setStatus('error', 'errore');
-      console.error('[BlindPlayer] Player error:', msg);
+      console.error('[BP] Player error:', msg);
     });
   }
 
-  // ── Event listeners ───────────────────────────────────────────
   function bindEvents() {
-    ui.btnLogin.addEventListener('click', () => Auth.login());
-
-    ui.btnLogout.addEventListener('click', () => {
+    ui.btnLogin.addEventListener('click', function() { Auth.login(false); });
+    ui.btnLogout.addEventListener('click', function() {
       if (confirm('Disconnettersi?')) Auth.logout();
     });
-
-    ui.btnBack.addEventListener('click', () => showScreen('playlists'));
-
-    ui.btnPlay.addEventListener('click', () => Player.togglePlay());
-
-    ui.btnNext.addEventListener('click', async () => {
-      try { await Player.next(); updateCounter(); }
-      catch (e) { toast(e.message, true); }
+    ui.btnBack.addEventListener('click', function() { showScreen('playlists'); });
+    ui.btnPlay.addEventListener('click', function() { Player.togglePlay(); });
+    ui.btnNext.addEventListener('click', async function() {
+      try { await Player.next(); updateCounter(); } catch(e) { toast(e.message, true); }
     });
-
-    ui.btnPrev.addEventListener('click', async () => {
-      try { await Player.prev(); updateCounter(); }
-      catch (e) { toast(e.message, true); }
+    ui.btnPrev.addEventListener('click', async function() {
+      try { await Player.prev(); updateCounter(); } catch(e) { toast(e.message, true); }
     });
-
-    ui.volumeSlider.addEventListener('input', e => {
+    ui.volumeSlider.addEventListener('input', function(e) {
       Player.setVolume(parseInt(e.target.value, 10));
     });
-
-    ui.btnLoadUri.addEventListener('click', () => {
-      const val = ui.inputUri.value.trim();
+    ui.btnLoadUri.addEventListener('click', function() {
+      var val = ui.inputUri.value.trim();
       if (!val) { toast('Incolla un URL o URI Spotify', true); return; }
-      // Valida prima di andare al player
-      const id = Player.extractPlaylistId(val);
-      if (!id) { toast('Link non valido — usa un URL o URI Spotify', true); return; }
+      var id = Player.extractPlaylistId(val);
+      if (!id) { toast('Link non valido \u2014 usa un URL o URI Spotify', true); return; }
       launchPlaylist(val);
     });
-
-    ui.inputUri.addEventListener('keydown', e => {
+    ui.inputUri.addEventListener('keydown', function(e) {
       if (e.key === 'Enter') ui.btnLoadUri.click();
     });
   }
 
-  // ── Init principale ───────────────────────────────────────────
   async function init() {
     bindEvents();
     setupPlayerCallbacks();
 
-    const params = new URLSearchParams(window.location.search);
-    const code  = params.get('code');
-    const error = params.get('error');
+    var params = new URLSearchParams(window.location.search);
+    var code   = params.get('code');
+    var error  = params.get('error');
 
     if (error) {
-      toast('Autenticazione annullata: ' + error, true);
+      toast('Autenticazione annullata', true);
       showScreen('login');
       return;
     }
@@ -228,33 +190,31 @@ const App = (() => {
     if (code) {
       try {
         await Auth.exchangeCode(code);
-        await afterLogin();
+        afterLogin();
       } catch (e) {
         toast('Errore login: ' + e.message, true);
-        console.error('[BlindPlayer] exchangeCode error:', e);
+        console.error('[BP] exchangeCode error:', e);
         showScreen('login');
       }
       return;
     }
 
     if (Auth.isLoggedIn()) {
-      await afterLogin();
+      afterLogin();
     } else {
       showScreen('login');
     }
   }
 
-  async function afterLogin() {
+  function afterLogin() {
     showScreen('playlists');
-    // Avvia init player e caricamento playlist in parallelo
-    Player.init().catch(e => {
-      console.warn('[BlindPlayer] Player init warning:', e.message);
-      // Non è fatale qui — verrà ritentato al momento del play
+    Player.init().catch(function(e) {
+      console.warn('[BP] Player init warning:', e.message);
     });
     loadUserPlaylists();
   }
 
-  return { init };
+  return { init: init };
 })();
 
-document.addEventListener('DOMContentLoaded', () => App.init());
+document.addEventListener('DOMContentLoaded', function() { App.init(); });
