@@ -1,7 +1,8 @@
 const Auth = (() => {
   const STORAGE_KEY = 'bp_token';
   const VERIFIER_KEY = 'bp_cv';
-  const STATE_KEY = 'bp_state';
+  const STATE_KEY    = 'bp_state';
+  const TV_KEY       = 'bp_tv'; // token version
 
   function randomString(len) {
     len = len || 64;
@@ -30,14 +31,14 @@ const Auth = (() => {
     sessionStorage.setItem(VERIFIER_KEY, verifier);
     sessionStorage.setItem(STATE_KEY, state);
     var params = new URLSearchParams({
-      client_id: CONFIG.CLIENT_ID,
-      response_type: 'code',
-      redirect_uri: CONFIG.REDIRECT_URI,
+      client_id:             CONFIG.CLIENT_ID,
+      response_type:         'code',
+      redirect_uri:          CONFIG.REDIRECT_URI,
       code_challenge_method: 'S256',
-      code_challenge: challenge,
-      state: state,
-      scope: CONFIG.SCOPES,
-      show_dialog: forceDialog ? 'true' : 'false'
+      code_challenge:        challenge,
+      state:                 state,
+      scope:                 CONFIG.SCOPES,
+      show_dialog:           forceDialog ? 'true' : 'false',
     });
     window.location.href = CONFIG.SPOTIFY_AUTH_URL + '?' + params.toString();
   }
@@ -49,12 +50,12 @@ const Auth = (() => {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-        client_id: CONFIG.CLIENT_ID,
-        grant_type: 'authorization_code',
-        code: code,
-        redirect_uri: CONFIG.REDIRECT_URI,
-        code_verifier: verifier
-      }).toString()
+        client_id:     CONFIG.CLIENT_ID,
+        grant_type:    'authorization_code',
+        code:          code,
+        redirect_uri:  CONFIG.REDIRECT_URI,
+        code_verifier: verifier,
+      }).toString(),
     });
     if (!res.ok) {
       var err = await res.json().catch(function() { return {}; });
@@ -62,6 +63,8 @@ const Auth = (() => {
     }
     var data = await res.json();
     saveToken(data);
+    // Salva la versione corrente degli scope
+    localStorage.setItem(TV_KEY, String(CONFIG.TOKEN_VERSION));
     sessionStorage.removeItem(VERIFIER_KEY);
     sessionStorage.removeItem(STATE_KEY);
     window.history.replaceState({}, document.title, window.location.pathname);
@@ -75,10 +78,10 @@ const Auth = (() => {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-        client_id: CONFIG.CLIENT_ID,
-        grant_type: 'refresh_token',
-        refresh_token: token.refresh_token
-      }).toString()
+        client_id:     CONFIG.CLIENT_ID,
+        grant_type:    'refresh_token',
+        refresh_token: token.refresh_token,
+      }).toString(),
     });
     if (!res.ok) { logout(); return null; }
     var data = await res.json();
@@ -105,18 +108,28 @@ const Auth = (() => {
 
   function logout() {
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(TV_KEY);
     window.location.href = window.location.pathname;
   }
 
+  // Controlla se il token esiste ed è della versione giusta
   function isLoggedIn() {
-    return !!loadToken();
+    if (!loadToken()) return false;
+    var savedVersion = parseInt(localStorage.getItem(TV_KEY) || '0', 10);
+    if (savedVersion < CONFIG.TOKEN_VERSION) {
+      // Token vecchio — pulisci silenziosamente, l'utente dovrà rifare il login
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(TV_KEY);
+      return false;
+    }
+    return true;
   }
 
   async function apiGet(path) {
     var token = await getAccessToken();
     if (!token) throw new Error('Non autenticato');
     var res = await fetch(CONFIG.SPOTIFY_API_BASE + path, {
-      headers: { Authorization: 'Bearer ' + token }
+      headers: { Authorization: 'Bearer ' + token },
     });
     if (res.status === 401) {
       var refreshed = await refresh();
@@ -125,8 +138,7 @@ const Auth = (() => {
     }
     if (!res.ok) {
       var err = await res.json().catch(function() { return {}; });
-      var msg = (err.error && err.error.message) || ('Errore API ' + res.status);
-      throw new Error(msg);
+      throw new Error((err.error && err.error.message) || ('Errore API ' + res.status));
     }
     return res.json();
   }
